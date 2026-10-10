@@ -1,0 +1,14 @@
+# Secrets
+.env
+
+# Dependencies / build
+node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+
+# Local data, logs, downloads
+*.db
+*.log
+*.tar.gz
+temp_download/
