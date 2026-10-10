@@ -52,7 +52,7 @@ export default function IncidentDetail() {
       setActiveTab('scripts')
     } catch (err) {
       console.error(err)
-      setError('Failed to run SRE AI analysis. Verify your Claude API configuration or server state.')
+      setError(err.response?.data?.detail || 'Failed to run SRE AI analysis. Verify your Claude API configuration or server state.')
     } finally {
       setAnalyzing(false)
     }

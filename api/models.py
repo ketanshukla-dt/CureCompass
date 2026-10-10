@@ -68,7 +68,7 @@ class Incident(BaseModel):
     title: str
     severity: Severity
     status: IncidentStatus
-    incident_type: str         # cpu_memory | service_crash | db_slowness | deployment_rollback
+    incident_type: str         # cpu_memory | service_crash | db_slowness | deployment_rollback | monitoring_gap
     affected_entities: List[AffectedEntity]
     start_time: datetime
     duration_minutes: int

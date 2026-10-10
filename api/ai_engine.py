@@ -22,7 +22,7 @@ from functools import lru_cache
 from anthropic import AsyncAnthropic
 from api.config import get_settings
 from api.models import (
-    Incident, AIAnalysis, RemediationScript, ExecutionStep, RiskLevel
+    Incident, IncidentStatus, AIAnalysis, RemediationScript, ExecutionStep, RiskLevel
 )
 
 
@@ -95,22 +95,34 @@ def _build_analysis(data: dict) -> AIAnalysis:
 
 def _build_context(incident: Incident) -> str:
     """Build a rich context block from the Dynatrace incident for Claude."""
-    entities = ", ".join(e.entity_name for e in incident.affected_entities)
-    davis_rc = incident.raw_details.get("davis_root_cause") or "Not specified"
-    zones = ", ".join(incident.raw_details.get("management_zones", [])) or "Default"
+    raw = incident.raw_details
+    entities = "; ".join(
+        f"{e.entity_name} ({e.entity_type})" for e in incident.affected_entities
+    ) or "Unknown"
+    root_cause = raw.get("davis_root_cause")
+    if isinstance(root_cause, dict):
+        root_cause = f"{root_cause.get('name', 'unknown')} ({root_cause.get('type', 'unknown')})"
+    zones = ", ".join(raw.get("management_zones", [])) or "Default"
+    events = ", ".join(raw.get("davis_event_types", [])) or "None"
+    evidence = "; ".join(raw.get("evidence", [])) or "None"
+    comments = "; ".join(raw.get("comments", [])) or "None"
+    status = "still open" if incident.status != IncidentStatus.RESOLVED else "resolved"
 
     return f"""
 INCIDENT SUMMARY (from Dynatrace / Davis AI)
 ─────────────────────────────────────────────
-Problem ID     : {incident.id}
-Title          : {incident.title}
-Type           : {incident.incident_type}
-Severity       : {incident.severity}
-Duration       : {incident.duration_minutes} minutes (still open)
-Affected       : {entities}
-Management Zone: {zones}
-Davis Root Cause: {davis_rc}
-Impact Level   : {incident.raw_details.get("davis_impact_level", "SERVICE")}
+Problem ID      : {raw.get("display_id") or incident.id}
+Title           : {incident.title}
+Category        : {incident.incident_type}
+Severity        : {incident.severity.value}
+Duration        : {incident.duration_minutes} minutes ({status})
+Affected        : {entities}
+Management Zone : {zones}
+Davis Root Cause: {root_cause or "Not specified"}
+Davis Events    : {events}
+Evidence        : {evidence}
+Impact Level    : {raw.get("davis_impact_level") or "SERVICE"}
+Comments        : {comments}
 """.strip()
 
 
@@ -157,6 +169,9 @@ Your response MUST be valid JSON matching this exact schema:
 }}
 
 Rules:
+- Base every script on the ACTUAL affected entity types and event types above. Do NOT assume
+  Kubernetes, containers or a payment/web service unless the affected entities say so. Use
+  placeholders like <HOST_OR_IP> where a real value is not in the incident data.
 - Provide 2-4 scripts covering different approaches (e.g. restart + scale-out + cache clear)
 - Scripts must be SAFE — include pre-checks, validation steps, and rollback where possible
 - Include 5-8 execution steps total (mix of actions + validations)
@@ -169,6 +184,12 @@ INCIDENT TYPE GUIDANCE:
 - service_crash  → restart pod/service, check logs, rollback deployment
 - db_slowness    → kill long-running queries, increase pool size, restart connection pool
 - deployment_rollback → kubectl rollout undo, git revert, feature flag disable
+- monitoring_gap → Dynatrace monitoring infrastructure (ActiveGate, synthetic location/node,
+  OneAgent, extension). Check the ActiveGate service (systemctl status dynatracegateway /
+  Windows service "Dynatrace ActiveGate"), logs under /var/lib/dynatrace/gateway/log, network
+  reachability to the tenant/cluster on 443, proxy/firewall and certificate issues, disk space,
+  and version/upgrade status; restart the service only after checking logs. Do NOT use kubectl
+  unless the entity is a Kubernetes-hosted ActiveGate.
 
 Respond with ONLY the JSON. No markdown, no explanation outside the JSON."""
 
@@ -196,10 +217,22 @@ Respond with ONLY the JSON."""
 
 # ── Main AI functions ─────────────────────────────────────────────────────────
 
+def _has_real_key() -> bool:
+    key = get_settings().anthropic_api_key.strip()
+    return bool(key) and not (
+        key.startswith("sk-ant-XXX") or "YOUR_ANTHROPIC" in key or "sk-ant-placeholder" in key
+    )
+
+
 def _is_mock_mode() -> bool:
-    settings = get_settings()
-    key = settings.anthropic_api_key.strip()
-    return settings.simulation_mode or not key or key.startswith("sk-ant-XXX") or "YOUR_ANTHROPIC" in key or "sk-ant-placeholder" in key
+    """Canned demo output is only for SIMULATION_MODE, never for live incidents."""
+    if get_settings().simulation_mode:
+        return True
+    if not _has_real_key():
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not configured. Add a real key to .env and restart the server."
+        )
+    return False
 
 
 def _get_mock_analysis(incident: Incident) -> AIAnalysis:

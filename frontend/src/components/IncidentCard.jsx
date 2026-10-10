@@ -8,6 +8,7 @@ const TYPE_LABELS = {
   service_crash:       '💥 Service Crash',
   db_slowness:         '🗄️ Database',
   deployment_rollback: '🔄 Deployment',
+  monitoring_gap:      '📡 Monitoring',
 }
 
 export default function IncidentCard({ incident }) {

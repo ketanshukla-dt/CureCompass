@@ -28,7 +28,15 @@ _SEVERITY_MAP = {
 # ── Incident type detection (from DT problem title / impact areas) ────────────
 def _classify_incident(problem: dict) -> str:
     title = (problem.get("title") or "").lower()
+    event_types = " ".join(_event_types(problem)).lower()
 
+    # Monitoring-infrastructure problems (ActiveGates, synthetic locations, agents)
+    # must be checked first: they are not application/Kubernetes failures.
+    if any(k in title or k in event_types for k in [
+        "activegate", "synthetic", "monitoring not available", "oneagent", "extension",
+        "node_outage", "location outage",
+    ]):
+        return "monitoring_gap"
     if any(k in title for k in ["cpu", "memory", "heap", "resource"]):
         return "cpu_memory"
     if any(k in title for k in ["crash", "restart", "unavailable", "down", "pod"]):
@@ -38,6 +46,11 @@ def _classify_incident(problem: dict) -> str:
     if any(k in title for k in ["deployment", "deploy", "rollback", "error rate", "spike"]):
         return "deployment_rollback"
     return "service_crash"
+
+
+def _event_types(problem: dict) -> list[str]:
+    details = (problem.get("evidenceDetails") or {}).get("details") or []
+    return sorted({d["eventType"] for d in details if d.get("eventType")})
 
 
 def _parse_entity(entity: dict) -> AffectedEntity:
@@ -53,7 +66,7 @@ def _dt_to_incident(problem: dict) -> Incident:
     end_ms   = problem.get("endTime", 0)
     start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
 
-    if end_ms:
+    if end_ms and end_ms > 0:  # Dynatrace uses -1 for still-open problems
         end_dt = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
         duration = int((end_dt - start_dt).total_seconds() / 60)
     else:
@@ -79,7 +92,13 @@ def _dt_to_incident(problem: dict) -> Incident:
             # Davis AI root cause — passed to Claude for remediation
             "davis_root_cause":     problem.get("rootCauseEntity"),
             "davis_impact_level":   problem.get("impactLevel"),
-            "davis_event_types":    [e.get("eventType") for e in problem.get("recentComments", {}).get("comments", [])],
+            "display_id":           problem.get("displayId"),
+            "davis_event_types":    _event_types(problem),
+            "evidence":             [
+                d.get("displayName") for d in (problem.get("evidenceDetails") or {}).get("details") or []
+                if d.get("displayName")
+            ],
+            "comments":             [c.get("content") for c in (problem.get("recentComments") or {}).get("comments") or [] if c.get("content")],
             "affected_entity_names": [e.entity_name for e in entities],
             "problem_filters":      problem.get("problemFilters", []),
             "management_zones":     [mz.get("name") for mz in problem.get("managementZones", [])],
@@ -95,7 +114,7 @@ def _get_base_url(tenant_url: str) -> str:
 
 
 # ── Live Dynatrace fetch ──────────────────────────────────────────────────────
-_PROBLEM_FIELDS = "+affectedEntities,+rootCauseEntity,+recentComments"
+_PROBLEM_FIELDS = "+affectedEntities,+rootCauseEntity,+recentComments,+evidenceDetails"
 
 
 def _live_request_args(path: str) -> tuple[str, dict]:
@@ -107,20 +126,29 @@ def _live_request_args(path: str) -> tuple[str, dict]:
     return f"{_get_base_url(settings.dt_tenant_url)}/api/v2/{path}", headers
 
 
-async def _fetch_live_incidents() -> list[Incident]:
+async def _fetch_live_incidents(max_pages: int = 10) -> list[Incident]:
     url, headers = _live_request_args("problems")
+    # Dynatrace caps pageSize at 10 when `fields` is set, so follow nextPageKey.
+    # A nextPageKey request must not repeat the original query parameters.
     params = {
         "problemSelector": "status(OPEN)",
         "fields": _PROBLEM_FIELDS,
-        "pageSize": 50,
+        "pageSize": 10,
     }
+    problems: list[dict] = []
 
     async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.get(url, headers=headers, params=params)
-        resp.raise_for_status()
-        data = resp.json()
+        for _ in range(max_pages):
+            resp = await client.get(url, headers=headers, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            problems.extend(data.get("problems", []))
+            next_key = data.get("nextPageKey")
+            if not next_key:
+                break
+            params = {"nextPageKey": next_key}
 
-    return [_dt_to_incident(p) for p in data.get("problems", [])]
+    return [_dt_to_incident(p) for p in problems]
 
 
 async def _fetch_live_incident(problem_id: str) -> Incident | None:

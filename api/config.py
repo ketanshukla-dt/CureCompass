@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     dt_tenant_url: str = ""
     dt_api_token: str = ""
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    anthropic_model: str = "claude-sonnet-5-5"
     simulation_mode: bool = False
     port: int = 8000
 
