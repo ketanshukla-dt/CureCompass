@@ -18,6 +18,7 @@ Claude is used for 6 distinct AI touchpoints:
 import json
 import uuid
 from datetime import datetime, timezone
+from functools import lru_cache
 from anthropic import AsyncAnthropic
 from api.config import get_settings
 from api.models import (
@@ -25,8 +26,69 @@ from api.models import (
 )
 
 
+@lru_cache
 def _get_client() -> AsyncAnthropic:
+    # Reused across requests so the underlying HTTP connection pool is shared
     return AsyncAnthropic(api_key=get_settings().anthropic_api_key)
+
+
+def _parse_json_response(raw: str) -> dict:
+    """Parse Claude's reply, tolerating ```json fences and surrounding prose."""
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("```")[1].removeprefix("json")
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end == -1:
+        raise ValueError("Claude response did not contain a JSON object")
+    return json.loads(raw[start:end + 1])
+
+
+async def _ask_claude(prompt: str, max_tokens: int) -> dict:
+    message = await _get_client().messages.create(
+        model=get_settings().anthropic_model,
+        max_tokens=max_tokens,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return _parse_json_response(message.content[0].text)
+
+
+def _build_analysis(data: dict) -> AIAnalysis:
+    """Turn the recommendation JSON (live or mock) into an AIAnalysis."""
+    scripts = [
+        RemediationScript(
+            id=str(uuid.uuid4()),
+            title=s["title"],
+            description=s["description"],
+            language=s["language"],
+            script=s["script"],
+            risk_level=RiskLevel(s["risk_level"].lower()),
+            risk_reason=s["risk_reason"],
+            estimated_downtime=s["estimated_downtime"],
+            rollback_script=s.get("rollback_script"),
+        )
+        for s in data.get("scripts", [])
+    ]
+    steps = [
+        ExecutionStep(
+            step_number=st["step_number"],
+            title=st["title"],
+            instruction=st["instruction"],
+            command=st.get("command"),
+            expected_outcome=st["expected_outcome"],
+            is_validation=st.get("is_validation", False),
+        )
+        for st in data.get("execution_steps", [])
+    ]
+    return AIAnalysis(
+        root_cause=data.get("explanation", ""),
+        confidence=data.get("confidence", 80),
+        impact_summary=data.get("impact_summary", ""),
+        recommended_action=data.get("recommended_action", ""),
+        scripts=scripts,
+        execution_steps=steps,
+        post_fix_checks=data.get("post_fix_checks", []),
+        analysis_timestamp=datetime.now(timezone.utc),
+    )
 
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
@@ -306,41 +368,15 @@ def _get_mock_analysis(incident: Incident) -> AIAnalysis:
             "Confirm API gateway success rate for /checkout endpoints returns to 100%."
         ]
 
-    scripts = [
-        RemediationScript(
-            id=str(uuid.uuid4()),
-            title=s["title"],
-            description=s["description"],
-            language=s["language"],
-            script=s["script"],
-            risk_level=s["risk_level"],
-            risk_reason=s["risk_reason"],
-            estimated_downtime=s["estimated_downtime"],
-            rollback_script=s["rollback_script"]
-        ) for s in scripts_data
-    ]
-
-    steps = [
-        ExecutionStep(
-            step_number=st["step_number"],
-            title=st["title"],
-            instruction=st["instruction"],
-            command=st["command"],
-            expected_outcome=st["expected_outcome"],
-            is_validation=st["is_validation"]
-        ) for st in steps_data
-    ]
-
-    return AIAnalysis(
-        root_cause=explanation,
-        confidence=confidence,
-        impact_summary=impact_summary,
-        recommended_action=rec_action,
-        scripts=scripts,
-        execution_steps=steps,
-        post_fix_checks=checks,
-        analysis_timestamp=datetime.now(timezone.utc)
-    )
+    return _build_analysis({
+        "explanation": explanation,
+        "confidence": confidence,
+        "impact_summary": impact_summary,
+        "recommended_action": rec_action,
+        "scripts": scripts_data,
+        "execution_steps": steps_data,
+        "post_fix_checks": checks,
+    })
 
 
 def _get_mock_validation(incident: Incident) -> dict:
@@ -405,62 +441,8 @@ async def analyze_incident(incident: Incident) -> AIAnalysis:
     if _is_mock_mode():
         return _get_mock_analysis(incident)
 
-    settings = get_settings()
-    client = _get_client()
-    context = _build_context(incident)
-    prompt = RECOMMENDATION_PROMPT.format(context=context)
-
-    message = await client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    raw = message.content[0].text.strip()
-
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-
-    data = json.loads(raw)
-
-    scripts = []
-    for s in data.get("scripts", []):
-        scripts.append(RemediationScript(
-            id=str(uuid.uuid4()),
-            title=s["title"],
-            description=s["description"],
-            language=s["language"],
-            script=s["script"],
-            risk_level=RiskLevel(s["risk_level"].lower()),
-            risk_reason=s["risk_reason"],
-            estimated_downtime=s["estimated_downtime"],
-            rollback_script=s.get("rollback_script"),
-        ))
-
-    steps = []
-    for st in data.get("execution_steps", []):
-        steps.append(ExecutionStep(
-            step_number=st["step_number"],
-            title=st["title"],
-            instruction=st["instruction"],
-            command=st.get("command"),
-            expected_outcome=st["expected_outcome"],
-            is_validation=st.get("is_validation", False),
-        ))
-
-    return AIAnalysis(
-        root_cause=data.get("explanation", ""),
-        confidence=data.get("confidence", 80),
-        impact_summary=data.get("impact_summary", ""),
-        recommended_action=data.get("recommended_action", ""),
-        scripts=scripts,
-        execution_steps=steps,
-        post_fix_checks=data.get("post_fix_checks", []),
-        analysis_timestamp=datetime.now(timezone.utc),
-    )
+    prompt = RECOMMENDATION_PROMPT.format(context=_build_context(incident))
+    return _build_analysis(await _ask_claude(prompt, max_tokens=4096))
 
 
 async def validate_resolution(incident: Incident) -> dict:
@@ -472,21 +454,5 @@ async def validate_resolution(incident: Incident) -> dict:
     if _is_mock_mode():
         return _get_mock_validation(incident)
 
-    settings = get_settings()
-    client = _get_client()
-    context = _build_context(incident)
-    prompt = VALIDATION_PROMPT.format(context=context)
-
-    message = await client.messages.create(
-        model=settings.anthropic_model,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    raw = message.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-
-    return json.loads(raw)
+    prompt = VALIDATION_PROMPT.format(context=_build_context(incident))
+    return await _ask_claude(prompt, max_tokens=1024)

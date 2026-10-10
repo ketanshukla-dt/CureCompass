@@ -1,6 +1,6 @@
 import aiosqlite
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 DB_PATH = Path("incidents.db")
@@ -27,6 +27,9 @@ async def init_db():
                 cached_at TEXT NOT NULL
             )
         """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_history_resolved_at ON remediation_history (resolved_at DESC)"
+        )
         await db.commit()
 
 
@@ -34,7 +37,7 @@ async def save_analysis(incident_id: str, analysis_json: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO analysis_cache (incident_id, analysis_json, cached_at) VALUES (?, ?, ?)",
-            (incident_id, analysis_json, datetime.utcnow().isoformat())
+            (incident_id, analysis_json, datetime.now(timezone.utc).isoformat())
         )
         await db.commit()
 
@@ -63,7 +66,7 @@ async def record_resolution(
                (incident_id, incident_title, script_title, outcome, notes, resolved_at, duration_minutes)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (incident_id, incident_title, script_title, outcome,
-             notes, datetime.utcnow().isoformat(), duration_minutes)
+             notes, datetime.now(timezone.utc).isoformat(), duration_minutes)
         )
         await db.commit()
 

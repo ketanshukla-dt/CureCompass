@@ -28,7 +28,6 @@ _SEVERITY_MAP = {
 # ── Incident type detection (from DT problem title / impact areas) ────────────
 def _classify_incident(problem: dict) -> str:
     title = (problem.get("title") or "").lower()
-    impact = (problem.get("impactLevel") or "").upper()
 
     if any(k in title for k in ["cpu", "memory", "heap", "resource"]):
         return "cpu_memory"
@@ -38,9 +37,6 @@ def _classify_incident(problem: dict) -> str:
         return "db_slowness"
     if any(k in title for k in ["deployment", "deploy", "rollback", "error rate", "spike"]):
         return "deployment_rollback"
-    # fallback by impact level
-    if impact == "SERVICE":
-        return "service_crash"
     return "service_crash"
 
 
@@ -99,17 +95,23 @@ def _get_base_url(tenant_url: str) -> str:
 
 
 # ── Live Dynatrace fetch ──────────────────────────────────────────────────────
-async def _fetch_live_incidents() -> list[Incident]:
+_PROBLEM_FIELDS = "+affectedEntities,+rootCauseEntity,+recentComments"
+
+
+def _live_request_args(path: str) -> tuple[str, dict]:
     settings = get_settings()
     headers = {
         "Authorization": f"Api-Token {settings.dt_api_token}",
         "Content-Type": "application/json",
     }
-    base_url = _get_base_url(settings.dt_tenant_url)
-    url = f"{base_url}/api/v2/problems"
+    return f"{_get_base_url(settings.dt_tenant_url)}/api/v2/{path}", headers
+
+
+async def _fetch_live_incidents() -> list[Incident]:
+    url, headers = _live_request_args("problems")
     params = {
         "problemSelector": "status(OPEN)",
-        "fields": "+affectedEntities,+rootCauseEntity,+recentComments",
+        "fields": _PROBLEM_FIELDS,
         "pageSize": 50,
     }
 
@@ -122,14 +124,8 @@ async def _fetch_live_incidents() -> list[Incident]:
 
 
 async def _fetch_live_incident(problem_id: str) -> Incident | None:
-    settings = get_settings()
-    headers = {
-        "Authorization": f"Api-Token {settings.dt_api_token}",
-        "Content-Type": "application/json",
-    }
-    base_url = _get_base_url(settings.dt_tenant_url)
-    url = f"{base_url}/api/v2/problems/{problem_id}"
-    params = {"fields": "+affectedEntities,+rootCauseEntity,+recentComments"}
+    url, headers = _live_request_args(f"problems/{problem_id}")
+    params = {"fields": _PROBLEM_FIELDS}
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, headers=headers, params=params)

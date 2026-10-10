@@ -7,7 +7,7 @@ and the pre-built React frontend as static files.
 Start: python main.py
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,7 +60,10 @@ if STATIC_DIR.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_frontend(full_path: str):
-        # All non-API routes → React SPA
+        # Unknown /api/* paths should 404 as JSON, not return the SPA shell
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not found")
+        # All other routes → React SPA
         index = STATIC_DIR / "index.html"
         return FileResponse(str(index))
 else:

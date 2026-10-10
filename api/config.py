@@ -17,7 +17,7 @@ class Settings(BaseSettings):
         env_file_override = True
 
 
-# NOTE: No @lru_cache here — always reload from .env on each call.
-# This ensures that changing .env and restarting picks up the new values.
+# Cached: .env is parsed once per process; restart the server to pick up changes.
+@lru_cache
 def get_settings() -> Settings:
     return Settings()
