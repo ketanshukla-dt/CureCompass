@@ -4,6 +4,10 @@
 # Dependencies / build
 node_modules/
 frontend/dist/
+# Frontend build output (start.sh / start.ps1 / build.sh regenerate it)
+static/
+# Accidental nested clone of this repo
+CureCompass/
 __pycache__/
 *.pyc
 

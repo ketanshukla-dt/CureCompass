@@ -103,7 +103,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ./start.ps1
 ```
 
-This script prefers Python 3.12 if available via `py.exe -3.12`.
+This script uses Python 3.12 or 3.11 via `py.exe` if installed, otherwise the `python` on your PATH (3.11+ required).
 
 If you are using Python 3.14 and see a dependency build error for `pydantic-core`, switch to Python 3.11 or 3.12 and retry, or install Visual Studio Build Tools with the C++ toolchain.
 
@@ -120,6 +120,15 @@ If you are using Python 3.14 and see a dependency build error for `pydantic-core
 | `ANTHROPIC_API_KEY` | Claude API key from [console.anthropic.com](https://console.anthropic.com) |
 | `SIMULATION_MODE` | `true` = use mock incidents (default: `false`) |
 | `PORT` | Server port (default: `8000`) |
+| `HOST` | Interface to bind (default: `127.0.0.1`; the app has no login, so only widen behind an authenticating proxy) |
+| `ANTHROPIC_MODEL` | Claude model to use (default: `claude-sonnet-5-5`) |
+| `CORS_ORIGINS` | Extra allowed browser origins, comma-separated (only needed for the Vite dev server) |
+
+---
+
+## 📄 License
+
+Copyright (c) 2026 Ketan Shukla. All rights reserved. See [LICENSE](LICENSE).
 
 ---
 
@@ -185,7 +194,7 @@ CureCompass/
 
 | Layer | Technology |
 |---|---|
-| **AI** | Claude Opus 4 via Anthropic Python SDK |
+| **AI** | Claude (default `claude-sonnet-5-5`, configurable via `ANTHROPIC_MODEL`) via Anthropic Python SDK |
 | **Monitoring** | Dynatrace Problems API v2 + Davis AI |
 | **Backend** | Python · FastAPI · aiosqlite |
 | **Frontend** | React 18 · Vite · Tailwind CSS |

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# FixIQ — One-command start script
+# CureCompass — One-command start script
 # Usage: ./start.sh
 set -e
 
 echo ""
-echo "🔧 FixIQ — Intelligent Incident Remediation Platform"
+echo "🔧 CureCompass — Intelligent Incident Remediation Platform"
 echo "══════════════════════════════════════════════════"
 echo ""
 
@@ -32,9 +32,10 @@ if [ ! -d "static" ]; then
 fi
 
 echo ""
-echo "🚀 Starting FixIQ..."
-echo "   Visit: http://localhost:8000"
-echo "   API Docs: http://localhost:8000/docs"
+PORT="${PORT:-8000}"
+echo "🚀 Starting CureCompass..."
+echo "   Visit: http://localhost:${PORT}"
+echo "   API Docs: http://localhost:${PORT}/docs"
 echo ""
 
 python main.py

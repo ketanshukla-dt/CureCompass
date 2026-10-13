@@ -3,7 +3,7 @@ param(
 )
 
 Write-Host ""
-Write-Host "[FixIQ] - Intelligent Incident Remediation Platform"
+Write-Host "[CureCompass] - Intelligent Incident Remediation Platform"
 Write-Host "=================================================="
 Write-Host ""
 
@@ -15,9 +15,16 @@ if (-not (Test-Path .env)) {
 }
 
 $pyLauncher = Get-Command py.exe -ErrorAction SilentlyContinue
+$pythonArgs = $null
 if ($pyLauncher) {
+    # Prefer 3.12, then 3.11 (README: Python 3.11+). Skip versions that are not installed.
+    foreach ($ver in "-3.12", "-3.11") {
+        & $pyLauncher.Source $ver --version *> $null
+        if ($LASTEXITCODE -eq 0) { $pythonArgs = $ver; break }
+    }
+}
+if ($pythonArgs) {
     $pythonExe = $pyLauncher.Source
-    $pythonArgs = "-3.12"
 } else {
     $python = Get-Command python.exe -ErrorAction SilentlyContinue
     if (-not $python) {
@@ -25,7 +32,6 @@ if ($pyLauncher) {
         exit 1
     }
     $pythonExe = $python.Source
-    $pythonArgs = $null
 }
 
 Write-Host "[Info] Installing Python dependencies..."
@@ -55,7 +61,7 @@ if (-not $SkipFrontend) {
 }
 
 Write-Host ""
-Write-Host "Starting FixIQ..."
+Write-Host "Starting CureCompass..."
 Write-Host "   Visit: http://localhost:8000"
 Write-Host "   API Docs: http://localhost:8000/docs"
 Write-Host ""

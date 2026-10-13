@@ -19,7 +19,7 @@ function Sidebar() {
             <Zap size={16} className="text-white" />
           </div>
           <div>
-            <div className="text-white font-bold text-sm leading-tight">FixIQ</div>
+            <div className="text-white font-bold text-sm leading-tight">CureCompass</div>
             <div className="text-dt-text/50 text-xs">by Dynatrace</div>
           </div>
         </div>

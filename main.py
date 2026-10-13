@@ -1,5 +1,5 @@
 """
-FixIQ — Intelligent Incident Remediation Platform
+CureCompass — Intelligent Incident Remediation Platform
 ===================================================
 Monolith entry point: FastAPI serves both the REST API
 and the pre-built React frontend as static files.
@@ -30,13 +30,13 @@ async def lifespan(app: FastAPI):
     await database.init_db()
     settings = get_settings()
     mode = "SIMULATION" if settings.simulation_mode or not settings.dt_api_token else "LIVE DYNATRACE"
-    print(f"\n[FixIQ] Started - Mode: {mode}")
+    print(f"\n[CureCompass] Started - Mode: {mode}")
     print(f"   Open: http://localhost:{settings.port}\n")
     yield
 
 
 app = FastAPI(
-    title="FixIQ — Incident Remediation Platform",
+    title="CureCompass — Incident Remediation Platform",
     description="AI-powered remediation guidance built on top of Davis AI + Claude",
     version="1.0.0",
     lifespan=lifespan,
