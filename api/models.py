@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field
+from typing import Literal, Optional, List
 from enum import Enum
 from datetime import datetime
 
@@ -78,9 +78,9 @@ class Incident(BaseModel):
 
 
 class ResolveRequest(BaseModel):
-    script_id: str
-    notes: Optional[str] = None
-    outcome: str               # success | partial | failed
+    script_id: str = Field(max_length=100)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+    outcome: Literal["success", "partial", "failed"]
 
 
 class RemediationRecord(BaseModel):

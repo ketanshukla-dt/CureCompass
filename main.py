@@ -44,9 +44,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=get_settings().cors_origin_list,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 # API routes
@@ -77,4 +77,4 @@ else:
 
 if __name__ == "__main__":
     settings = get_settings()
-    uvicorn.run("main:app", host="0.0.0.0", port=settings.port, reload=False)
+    uvicorn.run("main:app", host=settings.host, port=settings.port, reload=False)

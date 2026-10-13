@@ -9,6 +9,7 @@ Simulation mode provides realistic mock data for offline demos.
 """
 
 import httpx
+from urllib.parse import quote
 from datetime import datetime, timezone
 from api.config import get_settings
 from api.models import (
@@ -152,7 +153,8 @@ async def _fetch_live_incidents(max_pages: int = 10) -> list[Incident]:
 
 
 async def _fetch_live_incident(problem_id: str) -> Incident | None:
-    url, headers = _live_request_args(f"problems/{problem_id}")
+    # Never let user input alter the API path (blocks "../entities" style traversal).
+    url, headers = _live_request_args(f"problems/{quote(problem_id, safe='')}")
     params = {"fields": _PROBLEM_FIELDS}
 
     async with httpx.AsyncClient(timeout=15) as client:
