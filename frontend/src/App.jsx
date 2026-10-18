@@ -15,7 +15,7 @@ function Sidebar() {
       {/* Logo */}
       <div className="p-5 border-b border-dt-border">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-dt-blue flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-dt-blue to-dt-purple flex items-center justify-center">
             <Zap size={16} className="text-white" />
           </div>
           <div>

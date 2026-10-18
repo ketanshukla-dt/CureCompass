@@ -133,7 +133,7 @@ export default function ScriptViewer({ script, onSelect, isSelected }) {
           style={vscDarkPlus}
           customStyle={{
             margin: 0,
-            background: '#020810',
+            background: '#0a0b12',
             fontSize: '12px',
             maxHeight: '280px',
             overflow: 'auto',
