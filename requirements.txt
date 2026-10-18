@@ -1,8 +1,10 @@
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-httpx==0.27.0
-anthropic==0.28.0
-python-dotenv==1.0.1
-aiosqlite==0.20.0
-pydantic==2.7.1
-pydantic-settings==2.3.0
+fastapi>=0.111,<1.0
+uvicorn[standard]>=0.29
+httpx>=0.27
+anthropic>=0.40
+aiosqlite>=0.20
+pydantic>=2.7,<3.0
+pydantic-settings>=2.3
+# Optional LLM transports (install only what you use):
+#   pip install "anthropic[bedrock]"   # LLM_PROVIDER=bedrock
+#   pip install "anthropic[vertex]"    # LLM_PROVIDER=vertex

@@ -8,14 +8,14 @@ we extract it and pass it to Claude for remediation guidance.
 Simulation mode provides realistic mock data for offline demos.
 """
 
-import httpx
+import re
+from datetime import UTC, datetime
 from urllib.parse import quote
-from datetime import datetime, timezone
-from api.config import get_settings
-from api.models import (
-    Incident, IncidentStatus, Severity, AffectedEntity
-)
 
+import httpx
+
+from api.config import get_settings
+from api.models import AffectedEntity, Incident, IncidentStatus, Severity
 
 # ── Severity mapping ──────────────────────────────────────────────────────────
 _SEVERITY_MAP = {
@@ -27,25 +27,41 @@ _SEVERITY_MAP = {
 }
 
 # ── Incident type detection (from DT problem title / impact areas) ────────────
+def _keyword_regex(*keywords: str) -> re.Pattern:
+    """Whole-word match, so 'db' never matches 'feedback' or 'down' 'markdown'."""
+    return re.compile(r"\b(?:" + "|".join(keywords) + r")\b", re.IGNORECASE)
+
+
+# Monitoring-infrastructure problems (ActiveGates, synthetic locations, agents) must be
+# checked first: they are not application/Kubernetes failures.
+_MONITORING_GAP = _keyword_regex(
+    "activegate", "synthetic", "monitoring not available", "oneagent", "extension",
+    "node_outage", "location outage",
+)
+# Event types are machine tokens like SYNTHETIC_NODE_OUTAGE (underscores join words),
+# so they need substring matching rather than whole-word matching.
+_MONITORING_EVENT_TOKENS = ("activegate", "synthetic", "oneagent", "extension", "node_outage")
+# Ordered: first match wins.
+_TITLE_RULES: list[tuple[str, re.Pattern]] = [
+    ("cpu_memory", _keyword_regex("cpu", "memory", "heap", "resource")),
+    (
+        "service_crash",
+        _keyword_regex("crash\\w*", "restart\\w*", "unavailable", "down", "pod\\w*"),
+    ),
+    ("db_slowness", _keyword_regex("database", "db", "query", "connection pool", "sql")),
+    ("deployment_rollback", _keyword_regex("deploy\\w*", "rollback", "error rate", "spike")),
+]
+
+
 def _classify_incident(problem: dict) -> str:
-    title = (problem.get("title") or "").lower()
+    title = problem.get("title") or ""
     event_types = " ".join(_event_types(problem)).lower()
 
-    # Monitoring-infrastructure problems (ActiveGates, synthetic locations, agents)
-    # must be checked first: they are not application/Kubernetes failures.
-    if any(k in title or k in event_types for k in [
-        "activegate", "synthetic", "monitoring not available", "oneagent", "extension",
-        "node_outage", "location outage",
-    ]):
+    if _MONITORING_GAP.search(title) or any(t in event_types for t in _MONITORING_EVENT_TOKENS):
         return "monitoring_gap"
-    if any(k in title for k in ["cpu", "memory", "heap", "resource"]):
-        return "cpu_memory"
-    if any(k in title for k in ["crash", "restart", "unavailable", "down", "pod"]):
-        return "service_crash"
-    if any(k in title for k in ["database", "db", "query", "connection pool", "sql"]):
-        return "db_slowness"
-    if any(k in title for k in ["deployment", "deploy", "rollback", "error rate", "spike"]):
-        return "deployment_rollback"
+    for incident_type, pattern in _TITLE_RULES:
+        if pattern.search(title):
+            return incident_type
     return "service_crash"
 
 
@@ -62,16 +78,26 @@ def _parse_entity(entity: dict) -> AffectedEntity:
     )
 
 
+def _evidence_names(problem: dict) -> list[str]:
+    details = (problem.get("evidenceDetails") or {}).get("details") or []
+    return [d["displayName"] for d in details if d.get("displayName")]
+
+
+def _comment_texts(problem: dict) -> list[str]:
+    comments = (problem.get("recentComments") or {}).get("comments") or []
+    return [c["content"] for c in comments if c.get("content")]
+
+
 def _dt_to_incident(problem: dict) -> Incident:
     start_ms = problem.get("startTime", 0)
-    end_ms   = problem.get("endTime", 0)
-    start_dt = datetime.fromtimestamp(start_ms / 1000, tz=timezone.utc)
+    end_ms = problem.get("endTime", 0)
+    start_dt = datetime.fromtimestamp(start_ms / 1000, tz=UTC)
 
     if end_ms and end_ms > 0:  # Dynatrace uses -1 for still-open problems
-        end_dt = datetime.fromtimestamp(end_ms / 1000, tz=timezone.utc)
+        end_dt = datetime.fromtimestamp(end_ms / 1000, tz=UTC)
         duration = int((end_dt - start_dt).total_seconds() / 60)
     else:
-        duration = int((datetime.now(timezone.utc) - start_dt).total_seconds() / 60)
+        duration = int((datetime.now(UTC) - start_dt).total_seconds() / 60)
 
     entities = [_parse_entity(e) for e in problem.get("affectedEntities", [])]
     severity = _SEVERITY_MAP.get(problem.get("severityLevel", ""), Severity.MEDIUM)
@@ -90,20 +116,17 @@ def _dt_to_incident(problem: dict) -> Incident:
         duration_minutes=duration,
         impact_count=len(entities),
         raw_details={
-            # Davis AI root cause — passed to Claude for remediation
-            "davis_root_cause":     problem.get("rootCauseEntity"),
-            "davis_impact_level":   problem.get("impactLevel"),
-            "display_id":           problem.get("displayId"),
-            "davis_event_types":    _event_types(problem),
-            "evidence":             [
-                d.get("displayName") for d in (problem.get("evidenceDetails") or {}).get("details") or []
-                if d.get("displayName")
-            ],
-            "comments":             [c.get("content") for c in (problem.get("recentComments") or {}).get("comments") or [] if c.get("content")],
+            # Davis AI root cause — passed to the LLM for remediation
+            "davis_root_cause": problem.get("rootCauseEntity"),
+            "davis_impact_level": problem.get("impactLevel"),
+            "display_id": problem.get("displayId"),
+            "davis_event_types": _event_types(problem),
+            "evidence": _evidence_names(problem),
+            "comments": _comment_texts(problem),
             "affected_entity_names": [e.entity_name for e in entities],
-            "problem_filters":      problem.get("problemFilters", []),
-            "management_zones":     [mz.get("name") for mz in problem.get("managementZones", [])],
-        }
+            "problem_filters": problem.get("problemFilters", []),
+            "management_zones": [mz.get("name") for mz in problem.get("managementZones", [])],
+        },
     )
 
 
@@ -173,7 +196,7 @@ _MOCK_INCIDENTS: list[dict] = [
         "severityLevel": "AVAILABILITY",
         "status": "OPEN",
         "impactLevel": "SERVICE",
-        "startTime": int((datetime.now(timezone.utc).timestamp() - 3600) * 1000),
+        "startTime": int((datetime.now(UTC).timestamp() - 3600) * 1000),
         "endTime": 0,
         "affectedEntities": [
             {"entityId": {"id": "HOST-001", "type": "HOST"}, "name": "prod-web-01"},
@@ -189,7 +212,7 @@ _MOCK_INCIDENTS: list[dict] = [
         "severityLevel": "ERROR",
         "status": "OPEN",
         "impactLevel": "SERVICE",
-        "startTime": int((datetime.now(timezone.utc).timestamp() - 1800) * 1000),
+        "startTime": int((datetime.now(UTC).timestamp() - 1800) * 1000),
         "endTime": 0,
         "affectedEntities": [
             {"entityId": {"id": "SVC-001", "type": "SERVICE"}, "name": "payment-service"},
@@ -205,7 +228,7 @@ _MOCK_INCIDENTS: list[dict] = [
         "severityLevel": "PERFORMANCE",
         "status": "OPEN",
         "impactLevel": "SERVICE",
-        "startTime": int((datetime.now(timezone.utc).timestamp() - 900) * 1000),
+        "startTime": int((datetime.now(UTC).timestamp() - 900) * 1000),
         "endTime": 0,
         "affectedEntities": [
             {"entityId": {"id": "DB-001", "type": "SERVICE"}, "name": "orders-db"},
@@ -221,7 +244,7 @@ _MOCK_INCIDENTS: list[dict] = [
         "severityLevel": "ERROR",
         "status": "OPEN",
         "impactLevel": "SERVICE",
-        "startTime": int((datetime.now(timezone.utc).timestamp() - 600) * 1000),
+        "startTime": int((datetime.now(UTC).timestamp() - 600) * 1000),
         "endTime": 0,
         "affectedEntities": [
             {"entityId": {"id": "SVC-004", "type": "SERVICE"}, "name": "user-api"},
@@ -244,14 +267,12 @@ def _mock_incident(problem_id: str) -> Incident | None:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 async def get_incidents() -> list[Incident]:
-    settings = get_settings()
-    if settings.simulation_mode or not settings.dt_api_token:
+    if not get_settings().dynatrace_is_live:
         return _mock_incidents()
     return await _fetch_live_incidents()
 
 
 async def get_incident_by_id(problem_id: str) -> Incident | None:
-    settings = get_settings()
-    if settings.simulation_mode or not settings.dt_api_token:
+    if not get_settings().dynatrace_is_live:
         return _mock_incident(problem_id)
     return await _fetch_live_incident(problem_id)

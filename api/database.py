@@ -1,13 +1,32 @@
-import aiosqlite
-import json
-from datetime import datetime, timezone
+"""SQLite storage: remediation history and the analysis cache."""
+
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-DB_PATH = Path("incidents.db")
+import aiosqlite
+
+from api.config import get_settings
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_BUSY_TIMEOUT_MS = 5000
 
 
-async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
+def _db_path() -> Path:
+    """DATABASE_PATH, resolved against the project root (not the working directory)."""
+    path = Path(get_settings().database_path)
+    return path if path.is_absolute() else _PROJECT_ROOT / path
+
+
+@asynccontextmanager
+async def _connect():
+    async with aiosqlite.connect(_db_path()) as db:
+        await db.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
+        yield db
+
+
+async def init_db() -> None:
+    async with _connect() as db:
         await db.execute("""
             CREATE TABLE IF NOT EXISTS remediation_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,28 +47,45 @@ async def init_db():
             )
         """)
         await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_history_resolved_at ON remediation_history (resolved_at DESC)"
+            "CREATE INDEX IF NOT EXISTS idx_history_resolved_at "
+            "ON remediation_history (resolved_at DESC)"
         )
         await db.commit()
 
 
-async def save_analysis(incident_id: str, analysis_json: str):
-    async with aiosqlite.connect(DB_PATH) as db:
+def _cache_cutoff() -> str:
+    ttl = timedelta(minutes=get_settings().analysis_cache_ttl_minutes)
+    return (datetime.now(UTC) - ttl).isoformat()
+
+
+async def save_analysis(incident_id: str, analysis_json: str) -> None:
+    async with _connect() as db:
         await db.execute(
-            "INSERT OR REPLACE INTO analysis_cache (incident_id, analysis_json, cached_at) VALUES (?, ?, ?)",
-            (incident_id, analysis_json, datetime.now(timezone.utc).isoformat())
+            "INSERT OR REPLACE INTO analysis_cache (incident_id, analysis_json, cached_at) "
+            "VALUES (?, ?, ?)",
+            (incident_id, analysis_json, datetime.now(UTC).isoformat()),
         )
         await db.commit()
 
 
 async def get_cached_analysis(incident_id: str) -> str | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    """Cached analysis JSON, or None if missing or older than the cache TTL."""
+    async with _connect() as db:
         async with db.execute(
-            "SELECT analysis_json FROM analysis_cache WHERE incident_id = ?",
-            (incident_id,)
+            "SELECT analysis_json FROM analysis_cache WHERE incident_id = ? AND cached_at >= ?",
+            (incident_id, _cache_cutoff()),
         ) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else None
+
+
+async def get_cached_incident_ids() -> set[str]:
+    """IDs of incidents that have a fresh cached analysis."""
+    async with _connect() as db:
+        async with db.execute(
+            "SELECT incident_id FROM analysis_cache WHERE cached_at >= ?", (_cache_cutoff(),)
+        ) as cursor:
+            return {row[0] for row in await cursor.fetchall()}
 
 
 async def record_resolution(
@@ -58,48 +94,45 @@ async def record_resolution(
     script_title: str,
     outcome: str,
     notes: str | None,
-    duration_minutes: int
-):
-    async with aiosqlite.connect(DB_PATH) as db:
+    duration_minutes: int,
+) -> None:
+    async with _connect() as db:
         await db.execute(
             """INSERT INTO remediation_history
-               (incident_id, incident_title, script_title, outcome, notes, resolved_at, duration_minutes)
+               (incident_id, incident_title, script_title, outcome, notes,
+                resolved_at, duration_minutes)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (incident_id, incident_title, script_title, outcome,
-             notes, datetime.now(timezone.utc).isoformat(), duration_minutes)
+             notes, datetime.now(UTC).isoformat(), duration_minutes),
         )
         await db.commit()
 
 
 async def get_history(limit: int = 50) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
-            "SELECT * FROM remediation_history ORDER BY resolved_at DESC LIMIT ?",
-            (limit,)
+            "SELECT * FROM remediation_history ORDER BY resolved_at DESC LIMIT ?", (limit,)
         ) as cursor:
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+            return [dict(row) for row in await cursor.fetchall()]
 
 
 async def get_history_stats() -> dict:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         async with db.execute(
-            "SELECT outcome, COUNT(*) as count FROM remediation_history GROUP BY outcome"
+            """SELECT COUNT(*),
+                      COALESCE(SUM(outcome = 'success'), 0),
+                      COALESCE(SUM(outcome = 'partial'), 0),
+                      COALESCE(SUM(outcome = 'failed'), 0),
+                      AVG(CASE WHEN outcome = 'success' THEN duration_minutes END)
+               FROM remediation_history"""
         ) as cursor:
-            rows = await cursor.fetchall()
-            stats = {row[0]: row[1] for row in rows}
-
-        async with db.execute(
-            "SELECT AVG(duration_minutes) FROM remediation_history WHERE outcome = 'success'"
-        ) as cursor:
-            row = await cursor.fetchone()
-            avg_duration = round(row[0] or 0, 1)
+            total, success, partial, failed, avg_duration = await cursor.fetchone()
 
     return {
-        "total": sum(stats.values()),
-        "success": stats.get("success", 0),
-        "partial": stats.get("partial", 0),
-        "failed": stats.get("failed", 0),
-        "avg_resolution_minutes": avg_duration
+        "total": total,
+        "success": success,
+        "partial": partial,
+        "failed": failed,
+        "avg_resolution_minutes": round(avg_duration or 0, 1),
     }

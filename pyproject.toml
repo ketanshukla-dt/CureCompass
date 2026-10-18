@@ -1,0 +1,15 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["frontend", "static", "CureCompass"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# Long lines in canned demo fixtures (script bodies) are intentional.
+per-file-ignores = { "api/fixtures.py" = ["E501"], "api/prompts.py" = ["E501"] }

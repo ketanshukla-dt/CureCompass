@@ -18,7 +18,7 @@ export default function StepGuide({ steps }) {
     <div>
       {/* Progress bar */}
       <div className="flex items-center justify-between mb-4 text-xs text-dt-text/60">
-        <span>{completed.size} of {steps.length} steps completed</span>
+        <span aria-live="polite">{completed.size} of {steps.length} steps completed</span>
         <span className="font-semibold text-dt-blue">{progress}%</span>
       </div>
       <div className="h-1.5 bg-dt-dark rounded-full mb-5">
@@ -35,7 +35,16 @@ export default function StepGuide({ steps }) {
           return (
             <div
               key={step.step_number}
+              role="button"
+              tabIndex={0}
+              aria-pressed={done}
               onClick={() => toggle(step.step_number)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  toggle(step.step_number)
+                }
+              }}
               className={`flex gap-3 p-3 rounded-lg cursor-pointer transition-all border ${
                 done
                   ? 'border-green-800/40 bg-green-900/10 opacity-70'

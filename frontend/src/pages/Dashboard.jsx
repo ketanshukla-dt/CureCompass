@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Activity, RefreshCw, AlertTriangle, CheckCircle2, Brain } from 'lucide-react'
 import IncidentCard from '../components/IncidentCard.jsx'
 import { fetchIncidents } from '../api/client.js'
+import { getErrorMessage } from '../utils/errors.js'
 
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }
 
@@ -21,7 +22,7 @@ export default function Dashboard() {
       )
       setIncidents(data)
     } catch (e) {
-      setError('Failed to load incidents. Check your Dynatrace connection.')
+      setError(getErrorMessage(e, 'Failed to load incidents. Check your Dynatrace connection.'))
     } finally {
       setLoading(false)
     }
@@ -95,6 +96,7 @@ export default function Dashboard() {
           <button
             key={f}
             onClick={() => setFilter(f)}
+            aria-pressed={filter === f}
             className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
               filter === f
                 ? 'bg-dt-blue border-dt-blue text-white font-semibold'
@@ -108,12 +110,12 @@ export default function Dashboard() {
 
       {/* Content */}
       {loading ? (
-        <div className="flex items-center justify-center py-20 text-dt-text/40">
-          <RefreshCw size={20} className="spin-slow mr-3" />
+        <div className="flex items-center justify-center py-20 text-dt-text/40" role="status" aria-live="polite">
+          <RefreshCw size={20} className="spin-slow mr-3" aria-hidden="true" />
           Loading incidents from Dynatrace...
         </div>
       ) : error ? (
-        <div className="card border-red-800/50 bg-red-900/10 text-red-400 text-sm text-center py-8">
+        <div role="alert" className="card border-red-800/50 bg-red-900/10 text-red-400 text-sm text-center py-8">
           {error}
         </div>
       ) : filtered.length === 0 ? (

@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { History, TrendingUp, CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
 import { fetchHistory, fetchHistoryStats } from '../api/client.js'
 import { formatDistanceToNow } from 'date-fns'
+import { getErrorMessage } from '../utils/errors.js'
 
 const OUTCOME_CONFIG = {
   success: { icon: CheckCircle2, cls: 'text-green-400', bg: 'bg-green-900/20 border-green-800/40', label: 'Resolved' },
@@ -13,17 +14,36 @@ export default function HistoryPage() {
   const [history, setHistory] = useState([])
   const [stats, setStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  useEffect(() => {
-    Promise.all([fetchHistory(), fetchHistoryStats()]).then(([h, s]) => {
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const [h, s] = await Promise.all([fetchHistory(), fetchHistoryStats()])
       setHistory(h)
       setStats(s)
-    }).finally(() => setLoading(false))
+    } catch (err) {
+      setError(getErrorMessage(err, 'Failed to load remediation history.'))
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
+  useEffect(() => { load() }, [load])
+
   if (loading) return (
-    <div className="flex items-center justify-center h-full text-dt-text/40 text-sm">
+    <div className="flex items-center justify-center h-full text-dt-text/40 text-sm" role="status" aria-live="polite">
       Loading history...
+    </div>
+  )
+
+  if (error) return (
+    <div className="p-6 max-w-4xl">
+      <div role="alert" className="card border-red-800/50 bg-red-900/10 text-red-400 text-sm text-center py-8">
+        <p className="mb-4">{error}</p>
+        <button onClick={load} className="btn-ghost">Retry</button>
+      </div>
     </div>
   )
 

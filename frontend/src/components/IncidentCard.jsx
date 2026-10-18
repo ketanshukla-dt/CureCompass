@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { Clock, Server, ChevronRight, Brain } from 'lucide-react'
 import SeverityBadge from './SeverityBadge.jsx'
 import { formatDistanceToNow } from 'date-fns'
+import { formatDuration } from '../utils/format.js'
 
 const TYPE_LABELS = {
   cpu_memory:          '⚡ CPU / Memory',
@@ -18,7 +19,15 @@ export default function IncidentCard({ incident }) {
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       onClick={() => navigate(`/incidents/${incident.id}`)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          navigate(`/incidents/${incident.id}`)
+        }
+      }}
       className="card cursor-pointer hover:border-dt-blue transition-all group"
     >
       <div className="flex items-start justify-between gap-4">
@@ -52,7 +61,7 @@ export default function IncidentCard({ incident }) {
               <Server size={11} />
               {incident.impact_count} {incident.impact_count === 1 ? 'entity' : 'entities'}
             </span>
-            <span>{incident.duration_minutes}m open</span>
+            <span>{formatDuration(incident.duration_minutes)} open</span>
           </div>
         </div>
 

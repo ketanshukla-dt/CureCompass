@@ -9,24 +9,44 @@ const RISK_CONFIG = {
   high:   { cls: 'risk-high',   icon: '🔴', label: 'High Risk' },
 }
 
+const EXTENSIONS = { bash: 'sh', powershell: 'ps1', kubectl: 'sh', python: 'py' }
+const MAX_BASENAME_LENGTH = 60
+
+const buildFilename = (title, language) => {
+  const base = String(title || '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^A-Za-z0-9._-]/g, '')
+    .replace(/^\.+/, '')
+    .slice(0, MAX_BASENAME_LENGTH)
+    .toLowerCase()
+  return `${base || 'script'}.${EXTENSIONS[language] || 'sh'}`
+}
+
 export default function ScriptViewer({ script, onSelect, isSelected }) {
-  const [copied, setCopied] = useState(false)
+  const [copyState, setCopyState] = useState('idle') // idle | copied | failed
   const [showRollback, setShowRollback] = useState(false)
   const risk = RISK_CONFIG[script.risk_level] || RISK_CONFIG.medium
+  const filename = buildFilename(script.title, script.language)
 
   const copyToClipboard = async (text) => {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopyState('copied')
+    } catch {
+      setCopyState('failed')
+    }
+    setTimeout(() => setCopyState('idle'), 2000)
   }
 
   const downloadScript = () => {
-    const ext = { bash: 'sh', powershell: 'ps1', kubectl: 'sh', python: 'py' }[script.language] || 'sh'
     const blob = new Blob([script.script], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `${script.title.replace(/\s+/g, '-').toLowerCase()}.${ext}`
+    a.href = url
+    a.download = filename
     a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -38,7 +58,7 @@ export default function ScriptViewer({ script, onSelect, isSelected }) {
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <h3 className="text-white font-semibold text-sm">{script.title}</h3>
-            <span className={risk.cls}>{risk.icon} {risk.label}</span>
+            <span className={risk.cls}><span aria-hidden="true">{risk.icon}</span> {risk.label}</span>
             <span className="text-xs bg-dt-dark border border-dt-border px-2 py-0.5 rounded text-dt-text/60 font-mono">
               {script.language}
             </span>
@@ -60,6 +80,7 @@ export default function ScriptViewer({ script, onSelect, isSelected }) {
 
         <button
           onClick={() => onSelect(script.id)}
+          aria-pressed={isSelected}
           className={`shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
             isSelected
               ? 'bg-dt-blue border-dt-blue text-white'
@@ -70,12 +91,15 @@ export default function ScriptViewer({ script, onSelect, isSelected }) {
         </button>
       </div>
 
+      <p className="px-4 pb-3 text-xs text-yellow-400/80 flex items-center gap-1.5">
+        <AlertTriangle size={11} className="shrink-0" aria-hidden="true" />
+        AI-generated script: review it carefully before running in production.
+      </p>
+
       {/* Script */}
       <div className="relative">
         <div className="flex items-center justify-between px-4 py-2 bg-black/30 border-y border-dt-border/50">
-          <span className="text-xs text-dt-text/40 font-mono">{script.title.toLowerCase().replace(/\s+/g, '_')}.{
-            { bash: 'sh', powershell: 'ps1', kubectl: 'sh', python: 'py' }[script.language]
-          }</span>
+          <span className="text-xs text-dt-text/40 font-mono">{filename}</span>
           <div className="flex items-center gap-2">
             {script.rollback_script && (
               <button
@@ -94,8 +118,12 @@ export default function ScriptViewer({ script, onSelect, isSelected }) {
               onClick={() => copyToClipboard(showRollback ? script.rollback_script : script.script)}
               className="flex items-center gap-1 text-xs text-dt-text/50 hover:text-white transition-colors"
             >
-              {copied ? <Check size={11} className="text-green-400" /> : <Copy size={11} />}
-              {copied ? 'Copied!' : 'Copy'}
+              {copyState === 'copied' && <Check size={11} className="text-green-400" />}
+              {copyState === 'failed' && <AlertTriangle size={11} className="text-red-400" />}
+              {copyState === 'idle' && <Copy size={11} />}
+              <span aria-live="polite">
+                {copyState === 'copied' ? 'Copied!' : copyState === 'failed' ? 'Copy failed' : 'Copy'}
+              </span>
             </button>
           </div>
         </div>
