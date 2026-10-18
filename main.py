@@ -78,7 +78,9 @@ async def healthz():
 
 
 # Serve the React frontend (built static files)
-if STATIC_DIR.exists():
+# Both the shell and the hashed assets must exist: a checkout (e.g. CI) can have a
+# tracked static/index.html without the gitignored build output.
+if (STATIC_DIR / "index.html").exists() and (STATIC_DIR / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
     @app.get("/{full_path:path}", include_in_schema=False)
