@@ -27,7 +27,7 @@ tenant as a customer-facing capability, guided by Product Management and R&D.
 
 | Area | Delivered |
 |---|---|
-| Security | Loopback bind by default, restricted CORS, prompt-injection defences (system prompt, tagged and sanitised data), destructive-script auto-flagging, incident-ID validation, no error leakage |
+| Security | Loopback bind by default, restricted CORS, prompt-injection defences (system prompt, tagged and sanitised data), destructive-script auto-flagging (main script, rollback script and step commands), incident-ID validation, no error leakage |
 | Provider layer | `LLM_PROVIDER` = anthropic, bedrock, vertex or ollama behind one interface; clear 503 when unconfigured |
 | Code quality | `ai_engine.py` split into `prompts`, `analysis`, `safety`, `fixtures`, `llm/`; typed models with validation; word-boundary incident classification |
 | Reliability | Cache-aware `/analyze` with per-incident dedupe, cache TTL, `force` re-run, timeouts and retries, `/healthz` |
@@ -61,7 +61,32 @@ tenant as a customer-facing capability, guided by Product Management and R&D.
 | Who owns token cost: Dynatrace or the customer? | Pricing and quotas |
 | What may be sent to a model? | Hostnames, comments and entity names can be sensitive |
 
-**Work:** port the UI to the platform's app framework, replace SQLite with tenant-backed storage, replace the API token with tenant authentication, security and privacy review, legal sign-off before any public release.
+### Suggestions from Product Management
+
+Three suggestions were made for how CureCompass should be implemented for Dynatrace customers. They are sequenced so that the contained change comes first and the larger ones are evaluated before any rebuild.
+
+| Step | Suggestion | Type of work | Outcome |
+|---|---|---|---|
+| 3A | Use the DQL-based Storage query API instead of Problems API v2 | Implementation | Richer data for the model; recovery validated from metrics |
+| 3B | Look into the Dynatrace Remote MCP server | Evaluation, then optional implementation | Decision on letting the model fetch context itself |
+| 3C | Check whether a Dynatrace App is more efficient for customers | Evaluation, then decision | Go or no-go on app-based delivery |
+
+**3A. DQL Storage query API.** Replace or supplement the live path in `api/dynatrace.py`; the `Incident` model, routes, prompts and UI stay as they are.
+- Customer value: the model sees logs, metrics and events around the problem, not only evidence names and comments; recovery validation becomes measurable (today `/validate` re-reads the problem and asks the model; it does not query metrics); the 100-problem, open-only limit of the list call can be tuned.
+- Work: DQL queries per incident type; keep Problems v2 behind a feature flag until parity; extend `build_context` within the existing field limits and sanitising; add a metric-based validation path; document the token scopes; re-run the evaluation set.
+- Risks: DQL queries are billed by data scanned (use short windows, targeted queries, caching and a query budget); different token scopes; more context means more potentially sensitive data sent to the model.
+- Exit: parity with Problems v2 on all five incident types and better scores on the evaluation set.
+
+**3B. Dynatrace Remote MCP server.** Evaluate letting the model call Dynatrace tools (including DQL) itself instead of receiving one fixed payload.
+- Questions: which tools are exposed; which environments are supported (third-party listings suggest Dynatrace Managed and classic live URLs may not be, to be confirmed in official docs); authentication and read-only scoping; predictability, cost and latency when the model chooses its own queries; how to keep it testable in the evaluation harness.
+- Approach: proof of concept through the existing provider layer on the five incident types plus two unfamiliar ones; compare with 3A; write a one-page recommendation (primary, optional mode, or defer).
+
+**3C. Dynatrace App (AppEngine).** Evaluate delivery inside the customer's tenant with the Dynatrace App Toolkit and design system.
+- Customer value: no second tool or login; no server to host or patch; platform authentication and distribution.
+- Carry-over: the Python prompts, deny-list, parsing and provider layer would need porting to TypeScript or hosting as an external service called from an app function; the React pages would be rebuilt; SQLite would be replaced by tenant-backed storage; where the model API key lives and how outbound model calls are approved must be checked with the platform team.
+- Approach: a thin vertical slice (an app page that lists problems through DQL and shows one model-generated recommendation), then score standalone versus app on adoption effort, security review effort, development effort, feature fit and ownership.
+
+**Work after the decisions:** port the UI to the platform's app framework (if 3C is go), replace SQLite with tenant-backed storage, replace the API token with tenant authentication, security and privacy review, legal sign-off before any public release.
 
 ## Phase 4 — Customer value
 
@@ -89,3 +114,7 @@ tenant as a customer-facing capability, guided by Product Management and R&D.
 | Sensitive data sent to a model | Approved providers only; Ollama for local-only use; field minimisation |
 | Cost growth | Cache with TTL, dedupe, rate limits, Sonnet by default |
 | Model drift or regression | Evaluation harness in CI |
+| Recovery validation is a model judgement, not a metric check | Customers may over-trust "recovered"; show remaining checks; metric-based validation through DQL (3A) |
+| No login and no user recorded in history | Keep the loopback bind or an authenticating proxy; SSO and per-user identity in Phase 2 |
+| Model access uses a personal API key | Dynatrace-approved access (Phase 2); use only approved providers with real incident data |
+| Ownership and licence of the code are not yet confirmed for a Dynatrace customer product | Confirm the IP position with management and legal before pilot or rollout; the current `LICENSE` names an individual copyright holder |

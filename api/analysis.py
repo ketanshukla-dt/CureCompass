@@ -5,7 +5,7 @@ import uuid
 from datetime import UTC, datetime
 
 from api.models import AIAnalysis, ExecutionStep, RemediationScript, RiskLevel
-from api.safety import RISK_FLAG_PREFIX, is_risky_script
+from api.safety import RISK_FLAG_PREFIX, ROLLBACK_FLAG_PREFIX, is_risky_script
 
 
 def parse_json_response(raw: str) -> dict:
@@ -19,10 +19,15 @@ def parse_json_response(raw: str) -> dict:
 def _build_script(data: dict) -> RemediationScript:
     risk_level = RiskLevel(data["risk_level"].lower())
     risk_reason = data["risk_reason"]
+    rollback_script = data.get("rollback_script")
     if is_risky_script(data["script"]):
         # A destructive-looking script must never be presented as low risk.
         risk_level = RiskLevel.HIGH
         risk_reason = f"{RISK_FLAG_PREFIX} {risk_reason}"
+    elif rollback_script and is_risky_script(rollback_script):
+        # The rollback is run when things go wrong, so it gets the same scrutiny.
+        risk_level = RiskLevel.HIGH
+        risk_reason = f"{ROLLBACK_FLAG_PREFIX} {risk_reason}"
     return RemediationScript(
         id=str(uuid.uuid4()),
         title=data["title"],
@@ -32,16 +37,21 @@ def _build_script(data: dict) -> RemediationScript:
         risk_level=risk_level,
         risk_reason=risk_reason,
         estimated_downtime=data["estimated_downtime"],
-        rollback_script=data.get("rollback_script"),
+        rollback_script=rollback_script,
     )
 
 
 def _build_step(data: dict) -> ExecutionStep:
+    command = data.get("command")
+    instruction = data["instruction"]
+    if command and is_risky_script(command):
+        # Step commands are shown for copy-and-run, so flag them like scripts.
+        instruction = f"{RISK_FLAG_PREFIX} {instruction}"
     return ExecutionStep(
         step_number=data["step_number"],
         title=data["title"],
-        instruction=data["instruction"],
-        command=data.get("command"),
+        instruction=instruction,
+        command=command,
         expected_outcome=data["expected_outcome"],
         is_validation=data.get("is_validation", False),
     )

@@ -1,5 +1,4 @@
 # 🔧 CureCompass — Intelligent Incident Remediation Platform
-> **Dynatrace AI Innovation Contest**
 
 **Davis AI detects the problem. Claude prescribes the cure. You stay in control.**
 
@@ -21,7 +20,7 @@ CureCompass is an AI-powered remediation guidance platform that sits on top of D
 2. **Claude (Anthropic)** reads Davis's diagnosis and recommends the best fix — in plain English
 3. **Claude generates safe, ready-to-run scripts** — restart, rollback, cache clear, scale-out
 4. **Claude writes step-by-step execution guidance** with pre/post validation checks
-5. **Claude validates recovery** — confirms whether metrics show the incident is resolved
+5. **Claude assesses recovery** — re-reads the problem from Dynatrace and judges whether recovery looks likely, with checks to verify
 6. **Customers stay in control** — they decide what runs in their environment
 
 ---
@@ -35,7 +34,7 @@ CureCompass is an AI-powered remediation guidance platform that sits on top of D
 | 3 | **Risk Assessment** | Labels each script `low` / `medium` / `high` risk with a clear reason |
 | 4 | **NL Translation** | Converts dense Dynatrace technical payloads into plain English any engineer can act on |
 | 5 | **Execution Guidance** | Writes numbered step-by-step instructions with exact commands, pre-checks, expected outcomes |
-| 6 | **Resolution Validation** | After the fix is applied, confirms whether metrics indicate successful recovery |
+| 6 | **Resolution Validation** | After the fix is applied, re-reads the problem and assesses whether recovery is likely (a judgement from problem data; it does not query metrics) |
 
 > **Davis AI + Claude = Detection + Remediation.** Davis knows what broke. Claude knows how to fix it.
 
@@ -114,7 +113,7 @@ This script uses Python 3.12 or 3.11 via `py.exe` if installed, otherwise the `p
 
 If you are using Python 3.14 and see a dependency build error for `pydantic-core`, switch to Python 3.11 or 3.12 and retry, or install Visual Studio Build Tools with the C++ toolchain.
 
-> **No Dynatrace tenant?** Set `SIMULATION_MODE=true` in `.env` — the platform runs with realistic mock incidents covering all 5 incident types.
+> **No Dynatrace tenant?** Set `SIMULATION_MODE=true` in `.env` — the platform runs with realistic mock incidents covering four incident types (CPU/memory, service crash, database, deployment). The monitoring-gap type is supported by the classifier but has no mock incident.
 
 ---
 
@@ -157,11 +156,22 @@ With no provider access at all, set `SIMULATION_MODE=true`. Incident data can co
 
 CureCompass only *advises* — it never executes anything against your environment.
 
-- **Destructive-script flagging** — generated scripts are scanned against a deny-list (`rm -rf`, `curl | sh`, `DROP TABLE`, `--force`, `iptables -F`, ...); matches are auto-flagged as high risk in the UI.
+- **Destructive-script flagging** — generated scripts, rollback scripts and step commands are scanned against a deny-list (`rm -rf`, `curl | sh`, `DROP TABLE`, `--force`, `iptables -F`, ...). A matching script or rollback is forced to high risk; a matching step command is flagged in its instruction.
 - **Prompt-injection defences** — incident data is sanitised and passed to the model as tagged data under a fixed system prompt.
 - **Validated output** — model JSON is parsed into typed Pydantic models before it reaches the UI.
 - **Secure defaults** — binds to `127.0.0.1`, restricted CORS, incident-ID validation, no internal error details returned to clients.
 - **Reliability** — AI analyses are cached (with TTL) and de-duplicated per incident; LLM calls use timeouts and retries; `/healthz` for liveness checks.
+
+---
+
+## ⚠️ Known Limitations
+
+- **No authentication** — the app has no login, and history does not record who analysed or resolved an incident. Keep the default `127.0.0.1` binding, or put it behind an authenticating reverse proxy. SSO and per-user identity are planned (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+- **API key from `.env`** — the current setup uses a key you configure yourself. Use only a provider your organisation has approved before connecting real incident data; Dynatrace-approved model access is planned.
+- **Recovery validation is a judgement** — it re-reads the problem and asks the model; it does not query metrics.
+- **Pattern-based safety** — the deny-list is a safety net, not a security boundary. Always review scripts before running them.
+- **Problem data only** — uses Problems API v2: open problems (up to 100), evidence names and comments, with no logs, metrics or traces.
+- **Single instance** — SQLite and the in-process analysis lock suit one instance only.
 
 ---
 
@@ -241,7 +251,7 @@ CureCompass/
 4. **Switch to Scripts tab** — see 2–4 ready-to-run scripts with risk labels and rollback options
 5. **Open Execution Guide** — follow the step-by-step checklist, copy exact commands
 6. **Mark the outcome** — record whether the fix worked
-7. **Validate Recovery** — Claude confirms if metrics show the incident is resolved
+7. **Validate Recovery** — Claude re-reads the problem and assesses whether recovery looks likely
 8. **Check History** — view all past remediations, success rate, avg resolution time
 
 ---

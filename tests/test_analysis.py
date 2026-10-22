@@ -4,7 +4,20 @@ import pytest
 
 from api.analysis import build_analysis, parse_json_response
 from api.models import RiskLevel
-from api.safety import RISK_FLAG_PREFIX, is_risky_script
+from api.safety import RISK_FLAG_PREFIX, ROLLBACK_FLAG_PREFIX, is_risky_script
+
+
+def _step(**overrides) -> dict:
+    data = {
+        "step_number": 1,
+        "title": "Clean up",
+        "instruction": "Remove the stale cache",
+        "command": "systemctl restart app",
+        "expected_outcome": "Service restarts",
+        "is_validation": False,
+    }
+    data.update(overrides)
+    return data
 
 
 def _script(**overrides) -> dict:
@@ -78,6 +91,32 @@ def test_risky_script_is_forced_to_high_risk():
 def test_safe_script_keeps_declared_risk():
     analysis = build_analysis({"scripts": [_script()]})
     assert analysis.scripts[0].risk_level == RiskLevel.LOW
+
+
+def test_risky_rollback_script_is_forced_to_high_risk():
+    analysis = build_analysis({"scripts": [_script(rollback_script="rm -rf /var/lib/app")]})
+    flagged = analysis.scripts[0]
+    assert flagged.risk_level == RiskLevel.HIGH
+    assert flagged.risk_reason.startswith(ROLLBACK_FLAG_PREFIX)
+
+
+def test_safe_rollback_script_keeps_declared_risk():
+    analysis = build_analysis({"scripts": [_script(rollback_script="systemctl start app")]})
+    assert analysis.scripts[0].risk_level == RiskLevel.LOW
+
+
+def test_risky_step_command_is_flagged():
+    analysis = build_analysis({"execution_steps": [_step(command="rm -rf /tmp/cache")]})
+    step = analysis.execution_steps[0]
+    assert step.instruction.startswith(RISK_FLAG_PREFIX)
+    assert step.command == "rm -rf /tmp/cache"
+
+
+def test_safe_or_missing_step_command_is_not_flagged():
+    analysis = build_analysis(
+        {"execution_steps": [_step(), _step(step_number=2, command=None)]}
+    )
+    assert all(not s.instruction.startswith(RISK_FLAG_PREFIX) for s in analysis.execution_steps)
 
 
 @pytest.mark.parametrize("given,expected", [(150, 100), (-5, 0), (73, 73)])

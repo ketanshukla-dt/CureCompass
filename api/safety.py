@@ -17,6 +17,7 @@ _RISKY_SCRIPT_PATTERNS = [
 ]
 
 RISK_FLAG_PREFIX = "[Auto-flagged: contains potentially destructive commands]"
+ROLLBACK_FLAG_PREFIX = "[Auto-flagged: rollback script contains potentially destructive commands]"
 
 
 def is_risky_script(script: str) -> bool:
